@@ -1,1 +1,1 @@
-R scripts and associated files for recreating the amplicon sequence analyses from the manuscript. 
+R scripts and associated files for recreating the amplicon sequence analyses from the manuscript. The two data streams are for either the universal 16S primers ("_universal" or "_univ" files) or archaeal-specific 16S primers ("_archaeal" or "_arch" files). Raw sequence data can be found on the SRA under the Bioproject PRJNA1459608.
