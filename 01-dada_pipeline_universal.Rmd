@@ -1,0 +1,300 @@
+---
+title: "DADA2 pipeline"
+author: "Stephen Noell"
+date: "21/06/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE,
+                      fig.align = "center",
+                      fig.width = 10,
+                      fig.height = 6)
+```
+
+
+```{r}
+
+# Libraries
+library("dada2")
+library(ShortRead)
+library(Biostrings)
+library(seqinr)
+library(DECIPHER)
+library(readr)
+library(phangorn)
+library("tidyverse")       # data wrangling and visualisation
+library("phyloseq")        # analysis of microbial communities
+library("here")            # set the path to the folder
+library("ggplot2")
+library("ggpubr") #for putting figs together
+library("RColorBrewer") #for color palettes
+library("svglite") #for saving SVGs
+
+set.seed(57)
+```
+
+
+
+```{r}
+# Read the names in the fastq files
+#path1 <- "C:/Users/snoell/OneDrive - The University of Waikato/Documents/Backup_seqs/Fissure8_amplicons/universal"
+
+path1 <- "C:/Users/steno/Downloads/universal/universal/"
+
+fn_f <- sort(list.files(path = path1 , pattern="_1_cutadapt.fastq.gz", full.names = TRUE))
+
+fn_r <- sort(list.files(path = path1 , pattern="_2_cutadapt.fastq.gz", full.names = TRUE))
+
+# Give the sample names
+sample.names <- sort(list.files(path = path1 , pattern="_1_cutadapt.fastq.gz", full.names = FALSE)) %>%
+  str_remove_all("_L001_1_cutadapt.fastq.gz")
+
+read.names_f <- sort(list.files(path = path1, pattern="_1_cutadapt.fastq.gz", full.names = FALSE)) %>%
+  str_remove_all(".fastq.gz")
+
+read.names_r <- sort(list.files(path = path1 , pattern="_2_cutadapt.fastq.gz", full.names = FALSE)) %>%
+  str_remove_all(".fastq.gz")
+
+```
+
+```{r}
+# Check quality score of reads ----
+#plotQualityProfile(fn_f[3])
+
+# Set up the primer sequences 
+# where to check primer sequences - https://www.earthmicrobiome.org/protocols-and-standards/16s/
+
+FWD <- "GTGYCAGCMGCCGCGGTAA"   ## 515F (Parada) 
+REV <- "CCGYCAATTYMTTTRAGTTT"  ## 926R (Quince)  
+
+
+# Write a function that creates a list of all orientations of the primers
+allOrients <- function(primer) {
+  dna <- DNAString(primer)  
+  orients <- c(Forward = dna, Complement = Biostrings::complement(dna), Reverse = reverse(dna), 
+               RevComp = reverseComplement(dna))
+  return(sapply(orients, toString))  # Convert back to character vector
+}
+
+# Primer orientations - forward / complement / reverse / reverse complement
+FWD.orients <- allOrients(FWD)
+REV.orients <- allOrients(REV)
+
+
+# Write a function that counts how many time primers appear in a sequence
+primerHits <- function(primer, fns) {
+  nhits <- vcountPattern(primer, sread(readFastq(fns)), fixed = FALSE)
+  return(sum(nhits > 0))
+}
+
+# See if sequences have primer - in this example sample #1, change to check others
+rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fns = fn_f[[2]]), 
+      REV.ForwardReads = sapply(REV.orients, primerHits, fns = fn_r[[2]]))
+
+
+# Create a directory for the filtered files
+filt_f <- file.path(path1, "cutadapt.dada2", paste0(read.names_f, "_filt.fastq.gz"))
+filt_r <- file.path(path1, "cutadapt.dada2", paste0(read.names_r, "_filt.fastq.gz"))
+
+out <- filterAndTrim(fn_f, filt_f, rev = fn_r, filt.rev = filt_r, 
+                      rm.phix = TRUE, compress=TRUE, multithread=TRUE)
+out
+
+path2 <- paste0(path1, "/cutadapt.dada2")
+
+# Read the names in the cutadapt trimmed fastq.gz files
+fn.filt <- sort(list.files(path2, pattern=".fastq.gz", full.names = TRUE))
+
+#plotQualityProfile(fn.filt[3])
+
+```
+
+```{r}
+# Learn the errors ----
+
+# Learn the error Rates
+err_f <- learnErrors(filt_f, multithread=TRUE)
+err_r <- learnErrors(filt_r, multithread=TRUE)
+
+# visualize the estimated error rates:
+plotErrors(err_f, nominalQ=TRUE)
+
+```
+
+
+```{r}
+# Sample Inference ----
+
+# dada command to get the seqeunces
+dadaf <- dada(filt_f, err_f, multithread=TRUE)
+dadar <- dada(filt_r, err_r, multithread=TRUE)
+
+mergers <- mergePairs(dadaf, filt_f, dadar, filt_r, verbose=TRUE)
+
+# Construct sequence table
+seqtab <- makeSequenceTable(mergers)
+
+dim(seqtab)
+
+# The sequence table is a matrix with rows corresponding to (and named by) the samples
+# and columns corresponding to (and named by) the sequence variants
+
+# Inspect distribution of sequence lengths
+table(nchar(getSequences(seqtab)))
+
+#remove some too small or too big ones
+seqtab2 <- seqtab[,nchar(colnames(seqtab)) %in% 271:282]
+table(nchar(getSequences(seqtab2)))
+
+```
+
+
+```{r}
+
+# Track reads through the pipeline - look at the number of reads that made it through each step in the pipeline
+
+getN <- function(x) sum(getUniques(x))
+
+track <- cbind(out, sapply(dadaf, getN), rowSums(seqtab2))
+colnames(track) <- c("reads.in", "filter.and.trim", "sample.inference", "right.length")
+rownames(track) <- sample.names
+track2 <- as.data.frame(track) %>%
+  dplyr::mutate(prop = right.length / reads.in)
+
+track2
+
+# outside of filtering there should be no step in which a majority of reads are lost
+# have at least thousands of sequences per-sample, to have good resolution down to 1% frequency - https://github.com/benjjneb/dada2/issues/232
+# keep a good proportion of the reads (i.e. >>10%) all the way through the pipeline
+
+# Save the seqtab object
+saveRDS(seqtab2, "seqtab.uni")
+
+# Save tracking table
+write.csv(track2, "track_uni.csv")
+
+```
+
+
+```{r}
+
+# Remove chimeras - Chimeric sequences are identified if they can be exactly reconstructed by combining a left-segment and a right-segment from two more abundant parent sequences
+seqtab.nochim <- removeBimeraDenovo(seqtab2, method="consensus", multithread=TRUE, verbose=TRUE)
+
+dim(seqtab.nochim)
+
+sum(seqtab.nochim)/sum(seqtab2)
+# [1] 0.98 - the frequency of non-chimeric sequences
+
+saveRDS(seqtab.nochim, "seqtab.nochim.univ")
+```
+
+```{r}
+# Create a fasta table
+name.seq <- paste0("ASV", seq(ncol(seqtab.nochim)))
+uniqueSeqs <- as.list(colnames(seqtab.nochim))
+write.fasta(uniqueSeqs, name.seq, "asvs_no-filt_univ.fasta")
+```
+
+
+
+```{R}
+# Assign taxonomy ---- using DADA2 bayesian classifier
+# DADA2 provides a native implementation of the naive Bayesian classifier method for this
+# Maintains formatted training fastas - https://benjjneb.github.io/dada2/training.html
+
+# Silva database; using v. 138.2
+#taxa.silva <- assignTaxonomy(seqtab.nochim, "C:/Users/snoell/OneDrive - The University of Waikato/Documents/silva_nr99_v138.2_toGenus_trainset.fa.gz", multithread=TRUE)
+
+taxa.silva <- assignTaxonomy(seqtab.nochim, "C:/Users/steno/Downloads/silva_nr99_v138.2_toGenus_trainset.fa.gz", multithread=TRUE)
+
+# Save the taxanomy table
+saveRDS(taxa.silva, "taxa.silva.univ")
+
+```
+
+
+```{r}
+# Handoff to phyloseq ----
+# Load all data
+
+#seqtab.nochim <- readRDS("seqtab.nochim.univ")
+envdata <-  read.csv("sample_data.csv", row.names = 1, header = TRUE)
+#taxa.silva <- as.matrix(readRDS("taxa.silva.univ"))
+
+
+# Change the row names of the ASV table to match the environmental table 
+current <- rownames(seqtab.nochim)
+#write.csv(current, "sample_name_map0.csv")
+
+map_df <- as.data.frame(read.csv("sample_name_map2.csv"))
+rownames(seqtab.nochim) <- map_df$new[match(rownames(seqtab.nochim), map_df$old)]
+
+#Final phyloseq creation
+physeq0 <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+                    tax_table(taxa.silva),
+                    sample_data(envdata))
+
+#remove low abundance taxa
+taxa_sums_total <- taxa_sums(physeq0)
+
+physeq <- prune_taxa(taxa_sums_total > 1, physeq0)
+
+ntaxa(physeq0)
+ntaxa(physeq)
+
+#add DNA sequences to phyloseq object
+dna <- Biostrings::DNAStringSet(taxa_names(physeq))
+names(dna) <- taxa_names(physeq)
+physeq <- merge_phyloseq(physeq, dna)
+
+#new names for ASVs
+new.names <- paste0("ASV_", seq(ntaxa(physeq))) # define new names ASV_1, ASV_2, ...
+seqs <- taxa_names(physeq) # store sequences
+names(seqs) <- new.names # make map from ASV to full sequence
+taxa_names(physeq) <- new.names # rename 
+```
+
+
+```{r}
+#remove known erroneous assignments
+physeq.fin <- subset_taxa (physeq, (Kingdom !="Eukaryota")) # we remove Eukaryota and NA
+physeq.fin <- subset_taxa (physeq.fin, is.na(Order) | Order !="Chloroplast") # we remove Chloroplast
+physeq.fin <- subset_taxa (physeq.fin, is.na(Family) | Family != "Mitochondria") 
+physeq.fin <- subset_taxa(physeq.fin, !is.na(Phylum))
+
+ntaxa(physeq)
+ntaxa(physeq.fin)
+#saveRDS(physeq.fin, "physeq.univ")
+
+#saving table
+otu_table <- data.frame(otu_table(physeq.fin)) %>%
+  rownames_to_column(var = "Sample")
+
+otu_long <- data.table::transpose(setDT(otu_table), make.names = 'Sample', 
+                                  keep.names = 'Sample') %>%
+  as.data.frame(.) %>%
+  dplyr::rename(OTU = 1)
+
+#taxonomy
+tax_table <- data.frame(tax_table(physeq.fin)) %>%
+  rownames_to_column(var = "OTU")
+
+#sequence
+seq <- physeq.fin@refseq
+
+seq2 <- data.frame(
+  OTU = names(seq),
+  sequence = as.character(seq)
+)
+
+# Join long OTU table to taxonomy
+full_df <- tax_table %>%
+  left_join(otu_long, by = "OTU") %>%
+  left_join(., seq2, by = "OTU")
+
+#write.csv(full_df, "asv_info_univ.csv", row.names = FALSE)
+```

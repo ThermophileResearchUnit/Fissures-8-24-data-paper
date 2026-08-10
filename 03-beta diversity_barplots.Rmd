@@ -1,0 +1,496 @@
+---
+title: "Biological diversity"
+author: "Stephen Noell"
+date: "01/07/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE,
+                      fig.align = "center",
+                      fig.width = 10,
+                      fig.height = 6)
+```
+
+
+```{r Libraries and seed}
+
+# Libraries
+library("tidyverse")       # data wrangling and visualisation
+library("phyloseq")        # analysis of microbial communities
+library("vegan")           # ecological multivariate analyses
+library("microbiome") #for analyzing phyloseq objects
+library("viridis") #color package
+library("svglite") #for saving SVGs
+library("ggpubr") #for saving plots
+library("here")            # set the path to the folder
+library("ggplot2")
+library(pairwiseAdonis)
+library(stringr)
+library(RColorBrewer)
+
+set.seed(57)
+```
+
+```{r}
+#Load version of physeq object, with contaminants removed but not normalized, for alpha diversity analysis
+phy <- readRDS("physeq.arch")
+
+#Load version of physeq object, with contaminants removed and relative abundance normalized
+phy.rel <- readRDS("physeq.arch.rel")
+
+#Load rarefied physeq object
+phy.rar <- readRDS("physeq.arch.rar")
+```
+
+
+```{R beta diversity}
+bray.phy.rar <- phyloseq::distance(phy.rar, method = "bray")
+phy.rar.mds1 <- ordinate(phy.rar, "MDS", distance = bray.phy.rar)
+
+# final plot
+pcoa.phy.rar1 <- plot_ordination(phy.rar, phy.rar.mds1) +
+  geom_point(aes(color=Temperature), size=5,
+             alpha = 0.9) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text (size=11),
+    axis.text.x  = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    axis.text.y  = element_text(size=10),
+    legend.text = element_text(size=10),
+    legend.title = element_text(size=10),
+    legend.position = "right",
+    legend.box = "vertical") +
+  scale_color_gradientn(colors = brewer.pal(9, "Reds"), name = "Temperature")
+
+pcoa.phy.rar1
+
+```
+
+
+```{r}
+#Get color palette ready
+
+# Step 1: Get ALL unique phyla across all your phyloseq objects
+# Create a new variable that combines Treatment and Timepoint
+#make the list
+all_phyla_list <- c("Phyla < 1 %", sort(unique(tax_table(phy)[, "Phylum"])))
+
+# Step 2: Create color palette with enough colors
+# You need at least as many colors as unique phyla + "Phyla < 1%"
+n_colors_needed <- length(all_phyla_list) + 2
+n_colors_needed
+
+# Generate colors
+pal_barn <- RColorBrewer::brewer.pal(12, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "OrRd")
+pal_barn3 <- RColorBrewer::brewer.pal(8, "PuBu")
+pal_barn4 <- RColorBrewer::brewer.pal(8, "Greys")
+pal_barn5 <- RColorBrewer::brewer.pal(8, "Greens")
+
+
+# Step 1: Get phyla that are >1% abundant in at least one sample
+pm_all <- phy.rel %>% psmelt() %>%
+  select(Sample, Phylum, Abundance)
+
+# Find phyla with max abundance > 1% across all samples
+abundant_phyla <- pm_all %>%
+  group_by(Phylum) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance)) %>%
+  filter(TotalAbundance >= 0.01) %>%
+  pull(Phylum) %>%
+  sort()
+
+# Step 2: Create ordered list for colors
+phylum_levels <- c("Phyla < 1 %", abundant_phyla)
+length(phylum_levels)
+
+# Step 3: Create named color vector
+pal_barn <- RColorBrewer::brewer.pal(10, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "BrBG")
+all_colors <- c("black", pal_barn, pal_barn2)
+
+phylum_colors <- setNames(
+  all_colors[1:length(phylum_levels)],
+  phylum_levels
+)
+
+```
+
+
+```{r}
+# Make community composition plot to see what's different
+#plot aggregated by treatment
+
+# Data for plotting
+pm <- phy.rel %>% psmelt() %>%
+  select(Sample, SampleID, Temperature, Phylum, Abundance) %>%
+  dplyr::group_by(Sample, SampleID, Temperature, Phylum) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance), .groups = "drop") %>%
+  dplyr::rename(Abundance = TotalAbundance) %>%
+  ungroup() %>%
+  as.data.frame() %>%
+  filter(!is.na(Phylum)) %>%
+  mutate(Phylum = ifelse(Phylum %in% abundant_phyla, Phylum, "Phyla < 1 %")) %>%
+  mutate(SampleLabel = paste(SampleID, Temperature, sep = "-"))
+
+# Re-factor with only phyla actually present
+pm$Phylum <- factor(as.character(pm$Phylum), 
+                    levels = phylum_levels[phylum_levels %in% unique(pm$Phylum)])
+pm <- pm[order(pm$Phylum),]
+
+plot_phylum_a <- ggplot(pm, aes(x = SampleLabel, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = phylum_colors, drop = FALSE) +
+  labs(x = "Sample", y = "Relative Abundance") +
+  theme(
+    strip.text.x = element_text(size = 11),
+    legend.title = element_blank(),
+    legend.text = element_text(size=10),
+    axis.text.x  = element_text(size=11),
+    axis.title.x = element_text(size=11),
+    axis.text.y  = element_text(size=11),
+    axis.title.y = element_text(size=11),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.key.height=unit(0.3,"cm")) +
+  coord_flip(expand = FALSE) +
+  guides(fill = guide_legend(nrow = 5, byrow = TRUE))
+
+plot_phylum_a
+```
+
+
+
+
+
+```{r}
+#Get color palette ready
+
+# Step 1: Get ALL unique phyla across all your phyloseq objects
+# Create a new variable that combines Treatment and Timepoint
+#make the list
+all_class_list <- c("Class < 3 %", sort(unique(tax_table(phy)[, "Class"])))
+
+# Step 2: Create color palette with enough colors
+# You need at least as many colors as unique phyla + "Class < 1%"
+n_colors_needed <- length(all_class_list) + 2
+n_colors_needed
+
+# Generate colors
+pal_barn <- RColorBrewer::brewer.pal(12, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "OrRd")
+pal_barn3 <- RColorBrewer::brewer.pal(8, "PuBu")
+pal_barn4 <- RColorBrewer::brewer.pal(8, "Greys")
+pal_barn5 <- RColorBrewer::brewer.pal(8, "Greens")
+
+
+# Step 1: Get phyla that are >1% abundant in at least one sample
+pm_all <- phy.rel %>% psmelt() %>%
+  select(Sample, Class, Abundance)
+
+# Find phyla with max abundance > 1% across all samples
+abundant_class <- pm_all %>%
+  group_by(Class) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance)) %>%
+  filter(TotalAbundance >= 0.03) %>%
+  pull(Class) %>%
+  sort()
+
+# Step 2: Create ordered list for colors
+class_levels <- c("Class < 3 %", abundant_class)
+length(class_levels)
+
+# Step 3: Create named color vector
+pal_barn <- RColorBrewer::brewer.pal(10, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "BrBG")
+all_colors <- c("black", pal_barn, pal_barn2)
+
+class_colors <- setNames(
+  all_colors[1:length(class_levels)],
+  class_levels
+)
+
+```
+
+
+```{r}
+pm <- phy.rel %>% psmelt() %>%
+  select(Sample, SampleID, Temperature, Class, Abundance) %>%
+  dplyr::group_by(Sample, SampleID, Temperature, Class) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance), .groups = "drop") %>%
+  dplyr::rename(Abundance = TotalAbundance) %>%
+  ungroup() %>%
+  as.data.frame() %>%
+  mutate(Class = ifelse(is.na(Class) | !Class %in% abundant_class, "Class < 3 %", Class)) %>%
+  mutate(SampleLabel = paste(SampleID, Temperature, sep = "-"))
+
+pm$Class <- factor(as.character(pm$Class), 
+                    levels = class_levels[class_levels %in% unique(pm$Class)])
+pm <- pm[order(pm$Class),]
+
+plot_class_a <- ggplot(pm, aes(x = SampleLabel, y = Abundance, fill = Class)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = class_colors, drop = FALSE) +
+  labs(x = "Sample", y = "Relative Abundance") +
+  theme(
+    strip.text.x = element_text(size = 11),
+    legend.title = element_blank(),
+    legend.text = element_text(size=10),
+    axis.text.x  = element_text(size=11),
+    axis.title.x = element_text(size=11),
+    axis.text.y  = element_text(size=11),
+    axis.title.y = element_text(size=11),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.key.height=unit(0.3,"cm")) +
+  coord_flip(expand = FALSE) +
+  guides(fill = guide_legend(nrow = 5, byrow = TRUE))
+plot_class_a
+```
+
+############Now for universal results
+
+```{r}
+#Load version of physeq object, with contaminants removed but not normalized, for alpha diversity analysis
+phy <- readRDS("physeq.univ")
+
+#Load version of physeq object, with contaminants removed and relative abundance normalized
+phy.rel <- readRDS("physeq.univ.rel")
+
+#Load rarefied physeq object
+phy.rar <- readRDS("physeq.univ.rar")
+```
+
+
+```{R beta diversity}
+bray.phy.rar <- phyloseq::distance(phy.rar, method = "bray")
+phy.rar.mds1 <- ordinate(phy.rar, "MDS", distance = bray.phy.rar)
+
+# final plot
+pcoa.phy.rar1.univ <- plot_ordination(phy.rar, phy.rar.mds1) +
+  geom_point(aes(color=Temperature), size=5,
+             alpha = 0.9) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text (size=11),
+    axis.text.x  = element_text(size=10),
+    axis.title.y = element_text(size=11),
+    axis.text.y  = element_text(size=10),
+    legend.text = element_text(size=10),
+    legend.title = element_text(size=10),
+    legend.position = "right",
+    legend.box = "vertical") +
+  scale_color_gradientn(colors = brewer.pal(9, "Reds"), name = "Temperature")
+
+pcoa.phy.rar1.univ
+
+```
+
+
+```{r}
+#Get color palette ready
+
+# Step 1: Get ALL unique phyla across all your phyloseq objects
+# Create a new variable that combines Treatment and Timepoint
+#make the list
+all_phyla_list <- c("Phyla < 1 %", sort(unique(tax_table(phy)[, "Phylum"])))
+
+# Step 2: Create color palette with enough colors
+# You need at least as many colors as unique phyla + "Phyla < 1%"
+n_colors_needed <- length(all_phyla_list) + 2
+n_colors_needed
+
+# Generate colors
+pal_barn <- RColorBrewer::brewer.pal(12, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "OrRd")
+pal_barn3 <- RColorBrewer::brewer.pal(8, "PuBu")
+pal_barn4 <- RColorBrewer::brewer.pal(8, "Greys")
+pal_barn5 <- RColorBrewer::brewer.pal(8, "Greens")
+
+
+# Step 1: Get phyla that are >1% abundant in at least one sample
+pm_all <- phy.rel %>% psmelt() %>%
+  select(Sample, Phylum, Abundance)
+
+# Find phyla with max abundance > 1% across all samples
+abundant_phyla <- pm_all %>%
+  group_by(Phylum) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance)) %>%
+  filter(TotalAbundance >= 0.01) %>%
+  pull(Phylum) %>%
+  sort()
+
+# Step 2: Create ordered list for colors
+phylum_levels <- c("Phyla < 1 %", abundant_phyla)
+length(phylum_levels)
+
+# Step 3: Create named color vector
+pal_barn <- RColorBrewer::brewer.pal(10, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "BrBG")
+all_colors <- c("black", pal_barn, pal_barn2)
+
+phylum_colors <- setNames(
+  all_colors[1:length(phylum_levels)],
+  phylum_levels
+)
+
+```
+
+
+```{r}
+# Make community composition plot to see what's different
+#plot aggregated by treatment
+
+# Data for plotting
+pm <- phy.rel %>% psmelt() %>%
+  select(Sample, SampleID, Temperature, Phylum, Abundance) %>%
+  dplyr::group_by(Sample, SampleID, Temperature, Phylum) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance), .groups = "drop") %>%
+  dplyr::rename(Abundance = TotalAbundance) %>%
+  ungroup() %>%
+  as.data.frame() %>%
+  filter(!is.na(Phylum)) %>%
+  mutate(Phylum = ifelse(Phylum %in% abundant_phyla, Phylum, "Phyla < 1 %")) %>%
+  mutate(SampleLabel = paste(SampleID, Temperature, sep = "-"))
+
+# Re-factor with only phyla actually present
+pm$Phylum <- factor(as.character(pm$Phylum), 
+                    levels = phylum_levels[phylum_levels %in% unique(pm$Phylum)])
+pm <- pm[order(pm$Phylum),]
+
+plot_phylum_a_univ <- ggplot(pm, aes(x = SampleLabel, y = Abundance, fill = Phylum)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = phylum_colors, drop = FALSE) +
+  labs(x = "Sample", y = "Relative Abundance") +
+  theme(
+    strip.text.x = element_text(size = 11),
+    legend.title = element_blank(),
+    legend.text = element_text(size=10),
+    axis.text.x  = element_text(size=11),
+    axis.title.x = element_text(size=11),
+    axis.text.y  = element_text(size=11),
+    axis.title.y = element_text(size=11),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.key.height=unit(0.3,"cm")) +
+  coord_flip(expand = FALSE) +
+  guides(fill = guide_legend(nrow = 7, byrow = TRUE))
+
+plot_phylum_a_univ
+```
+
+
+
+
+
+```{r}
+#Get color palette ready
+
+# Step 1: Get ALL unique phyla across all your phyloseq objects
+# Create a new variable that combines Treatment and Timepoint
+#make the list
+all_class_list <- c("Class < 3 %", sort(unique(tax_table(phy)[, "Class"])))
+
+# Step 2: Create color palette with enough colors
+# You need at least as many colors as unique phyla + "Class < 1%"
+n_colors_needed <- length(all_class_list) + 2
+n_colors_needed
+
+# Generate colors
+pal_barn <- RColorBrewer::brewer.pal(12, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "OrRd")
+pal_barn3 <- RColorBrewer::brewer.pal(8, "PuBu")
+pal_barn4 <- RColorBrewer::brewer.pal(8, "Greys")
+pal_barn5 <- RColorBrewer::brewer.pal(8, "Greens")
+
+
+# Step 1: Get phyla that are >1% abundant in at least one sample
+pm_all <- phy.rel %>% psmelt() %>%
+  select(Sample, Class, Abundance)
+
+# Find phyla with max abundance > 1% across all samples
+abundant_class <- pm_all %>%
+  group_by(Class) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance)) %>%
+  filter(TotalAbundance >= 0.03) %>%
+  pull(Class) %>%
+  sort()
+
+# Step 2: Create ordered list for colors
+class_levels <- c("Class < 3 %", abundant_class)
+length(class_levels)
+
+# Step 3: Create named color vector
+pal_barn <- RColorBrewer::brewer.pal(10, "Paired")
+pal_barn2 <- RColorBrewer::brewer.pal(8, "BrBG")
+all_colors <- c("black", pal_barn, pal_barn2)
+
+class_colors <- setNames(
+  all_colors[1:length(class_levels)],
+  class_levels
+)
+
+```
+
+
+```{r}
+pm <- phy.rel %>% psmelt() %>%
+  select(Sample, SampleID, Temperature, Class, Abundance) %>%
+  dplyr::group_by(Sample, SampleID, Temperature, Class) %>%
+  dplyr::summarise(TotalAbundance = sum(Abundance), .groups = "drop") %>%
+  dplyr::rename(Abundance = TotalAbundance) %>%
+  ungroup() %>%
+  as.data.frame() %>%
+  mutate(Class = ifelse(is.na(Class) | !Class %in% abundant_class, "Class < 3 %", Class)) %>%
+  mutate(SampleLabel = paste(SampleID, Temperature, sep = "-"))
+
+pm$Class <- factor(as.character(pm$Class), 
+                    levels = class_levels[class_levels %in% unique(pm$Class)])
+pm <- pm[order(pm$Class),]
+
+plot_class_a_univ <- ggplot(pm, aes(x = SampleLabel, y = Abundance, fill = Class)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = class_colors, drop = FALSE) +
+  labs(x = "Sample", y = "Relative Abundance") +
+  theme(
+    strip.text.x = element_text(size = 11),
+    legend.title = element_blank(),
+    legend.text = element_text(size=10),
+    axis.text.x  = element_text(size=11),
+    axis.title.x = element_text(size=11),
+    axis.text.y  = element_text(size=11),
+    axis.title.y = element_text(size=11),
+    legend.position = "bottom",
+    legend.key.width = unit(0.3, "cm"),
+    legend.key.height=unit(0.3,"cm")) +
+  coord_flip(expand = FALSE) +
+  guides(fill = guide_legend(nrow = 7, byrow = TRUE))
+plot_class_a_univ
+```
+
+
+```{r}
+
+#Alpha and beta diversity plots
+
+arch <- ggarrange(pcoa.phy.rar1, plot_phylum_a, plot_class_a,
+                  nrow = 3,
+                  heights = c(0.5, 1, 1),
+                  labels = c("B", "D", "F"))
+
+univ <- ggarrange(pcoa.phy.rar1.univ, plot_phylum_a_univ, plot_class_a_univ,
+                  nrow = 3,
+                  heights = c(0.5, 1, 1),
+                  labels = c("A", "C", "E"))
+
+all <- ggarrange(univ, arch, ncol = 2, labels = "")
+
+#ggsave("beta_comm_comp.png", plot = all, dpi = 300, width = 250, height = 250, units = "mm")
+#ggsave("beta_comm_comp.svg", plot = all, dpi = 300, width = 250, height = 250, units = "mm")
+
+
+```

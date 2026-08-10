@@ -1,0 +1,145 @@
+---
+title: "Bio data analysis"
+author: "Stephen Noell"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE, 
+                      warning = FALSE,
+                      fig.align = "center",
+                      fig.width = 10,
+                      fig.height = 6)
+```
+
+
+```{r Libraries and seed}
+
+# Libraries
+library("tidyverse")       # data wrangling and visualisation
+library("phyloseq")        # analysis of microbial communities
+library("vegan")           # ecological multivariate analyses
+library("patchwork")       # plots together
+library("paletteer") #color package
+library("microbiome") #for analyzing phyloseq objects
+library("svglite") #for saving SVGs
+library("ggpubr") #for saving plots
+library("here")            # set the path to the folder 
+library(Biostrings)
+library(data.table)
+library(metagMisc)
+
+set.seed(57)
+```
+
+
+```{r Load the data}
+# Load the final phyloseq objects from the DADA2 pipeline
+physeq <- readRDS("physeq.arch")
+
+```
+
+```{r}
+####make sure taxonomy looks reasonable
+
+# Show available ranks in the dataset
+rank_names(physeq)
+
+ # How many domains? (Kingdom in the taxonomy table)
+table(tax_table(physeq)[, "Kingdom"], exclude = NULL) 
+
+# How many Phyla?
+table(tax_table(physeq)[, "Phylum"], exclude = NULL) 
+
+phy_f <- physeq
+
+reads <- rowSums(otu_table(phy_f))
+sum(reads)
+
+```
+
+
+### Sequences and ASVs data
+
+```{r ASVs and reads statistics}
+
+# Inspect number of reads and ASVs
+
+colSums.asv.df <- data.frame(colSums(otu_table(physeq))) %>%
+  tibble::rownames_to_column("ASV")
+
+plot_asvs <- ggplot(colSums.asv.df, aes(x = reorder(ASV, -colSums.otu_table.physeq..), y = colSums.otu_table.physeq..)) + 
+  geom_bar(stat = "identity") +
+  ylab("ASVs") +
+  xlab("") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+    )
+
+# Inspect number of sequences
+
+rowSums.asv.df <- data.frame(rowSums(otu_table(physeq))) %>%
+  rownames_to_column("Samples")
+
+plot_reads0 <- ggplot(rowSums.asv.df, aes(x = reorder(Samples, -rowSums.otu_table.physeq..), y =
+               rowSums.otu_table.physeq..)) +
+  geom_bar(stat = "identity") + 
+  coord_flip() +
+  ylab("Reads") +
+  xlab("")
+
+plot_asvs | plot_reads0
+
+# ASVs
+cat("ASVs - Min:", min(colSums.asv.df$colSums.otu_table.physeq..),
+    "Median:", median(colSums.asv.df$colSums.otu_table.physeq..),
+    "Max:", max(colSums.asv.df$colSums.otu_table.physeq..), "\n")
+
+# Reads
+cat("Reads - Min:", min(rowSums.asv.df$rowSums.otu_table.physeq..),
+    "Median:", median(rowSums.asv.df$rowSums.otu_table.physeq..),
+    "Max:", max(rowSums.asv.df$rowSums.otu_table.physeq..), "\n")
+
+#ggsave("reads_arch.png", plot = plot_reads0, dpi = 300, width = 100, height = 100, units = "mm")
+```
+
+
+
+```{r}
+otu_mat <- as(otu_table(physeq), "matrix")
+rarecurve(otu_mat, step = 1000, col = "blue", label = TRUE)
+```
+
+
+```{r}
+#rarefy data for alpha diversity and maybe beta diversity analyses
+otu2 <- t((otu_table(physeq)))
+
+physeq2 <- phyloseq(otu_table(otu2, taxa_are_rows=TRUE), 
+                    tax_table(tax_table(physeq)),
+                    sample_data(sample_data(physeq)))
+#perform rarefaction, i.e. subsample 1000 times and calculate avg abundance, without replacement
+phy_f.rar2 <- phyloseq_mult_raref_avg(
+  physeq = physeq2,
+  SampSize = min(sample_sums(physeq2)),
+  iter = 1000,
+  parallel = TRUE 
+)
+min(sample_sums(physeq2))
+#rarefies to lowest sample depth: 39667 reads
+```
+
+```{r}
+#Save version of physeq object, with contaminants removed and normalized to relative abundance
+physeq <- subset_taxa(physeq, !is.na(Phylum))
+
+phy_fa<- transform_sample_counts(physeq, function(x) x / sum(x) )
+
+#saveRDS(phy_fa, "physeq.arch.rel")
+#saveRDS(physeq, "physeq.arch")
+
+####Save rarefied data set
+#saveRDS(phy_f.rar2, "physeq.arch.rar")
+```
