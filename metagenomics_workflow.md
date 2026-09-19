@@ -1,7 +1,10 @@
 ## read trimming (bbduk v39.52)
+```bash
 parallel -j 10 -a samples.list 'bbduk.sh ktrim=r ordered minlen=50 mink=11 tbo rcomp=f k=21 ow=t ftm=5 zl=4 qtrim=rl trimq=20 in1=raw/{}_R1_001.fastq.gz in2=raw/{}_R2_001.fastq.gz ref=~/adapters/adapters.fa out1=trimmed/{}_R1.trimmed.fastq.gz out2=trimmed/{}_R2.trimmed.fastq.gz'
+```
 
 ## metaSPAdes (v3.15.4) assembly sbatch script
+```bash
 #!/bin/bash
 #SBATCH -o tr.%j.out
 #SBATCH -e tr.%j.err
@@ -20,9 +23,10 @@ for i in `cat samples.list`;do
         -k 21,33,55,77,101 \
         -o assemblies/metaspades_${i}
 done
+```
 
 ## binning using Metabat2 (v2.15) sbatch script
-
+```bash
 #!/bin/bash
 #SBATCH -o bn.%j.out
 #SBATCH -e bn.%j.err
@@ -55,10 +59,10 @@ for i in `cat samples.list`;do
         metabat2 -i ../contigs_gt1kb.fasta -a depth_min1500.txt -o bins/bin -t 16
     cd ../../../
 done
-
+```
 
 ## CheckM (v1.2.4) sbatch script
-
+```bash
 #!/bin/bash
 #SBATCH -o cm.%j.out
 #SBATCH -e cm.%j.err
@@ -71,9 +75,10 @@ done
 
 
 checkm lineage_wf -f CheckM.txt -t 32 -x fa mags_found checkm_out
+```
 
 ## GTDB-Tk (v2.1.0) sbatch script
-
+```bash
 #!/bin/bash
 #SBATCH -o gt.%j.out
 #SBATCH -e gt.%j.err
@@ -85,4 +90,4 @@ checkm lineage_wf -f CheckM.txt -t 32 -x fa mags_found checkm_out
 #SBATCH -J gtdbtk
 
 gtdbtk classify_wf --genome_dir all_bins --out_dir gtdb-tk_out --cpus 30 --pplacer_cpus 1 -x fa
-
+```
