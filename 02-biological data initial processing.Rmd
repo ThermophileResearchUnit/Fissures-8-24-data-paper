@@ -128,7 +128,7 @@ phy_f.rar2 <- phyloseq_mult_raref_avg(
   parallel = TRUE 
 )
 min(sample_sums(physeq2))
-#rarefies to lowest sample depth: 39667 reads
+#rarefies to lowest sample depth: 39312 reads
 ```
 
 ```{r}

@@ -489,8 +489,8 @@ univ <- ggarrange(pcoa.phy.rar1.univ, plot_phylum_a_univ, plot_class_a_univ,
 
 all <- ggarrange(univ, arch, ncol = 2, labels = "")
 
-#ggsave("beta_comm_comp.png", plot = all, dpi = 300, width = 250, height = 250, units = "mm")
-#ggsave("beta_comm_comp.svg", plot = all, dpi = 300, width = 250, height = 250, units = "mm")
+#ggsave("Figure 3_beta_comm_comp.png", plot = all, dpi = 300, width = 250, height = 250, units = "mm")
+#ggsave("Figure 3_beta_comm_comp.svg", plot = all, dpi = 300, width = 250, height = 250, units = "mm")
 
 
 ```

@@ -189,7 +189,9 @@ dim(seqtab.nochim)
 sum(seqtab.nochim)/sum(seqtab2)
 # [1] 0.98 - the frequency of non-chimeric sequences
 
-saveRDS(seqtab.nochim, "seqtab.nochim.univ")
+seqtab.nochim <- collapseNoMismatch(seqtab.nochim)
+
+#saveRDS(seqtab.nochim, "seqtab.nochim.univ")
 ```
 
 ```{r}
@@ -228,7 +230,7 @@ envdata <-  read.csv("sample_data.csv", row.names = 1, header = TRUE)
 
 # Change the row names of the ASV table to match the environmental table 
 current <- rownames(seqtab.nochim)
-#write.csv(current, "sample_name_map0.csv")
+write.csv(current, "sample_name_map0.csv")
 
 map_df <- as.data.frame(read.csv("sample_name_map2.csv"))
 rownames(seqtab.nochim) <- map_df$new[match(rownames(seqtab.nochim), map_df$old)]
@@ -268,7 +270,7 @@ physeq.fin <- subset_taxa(physeq.fin, !is.na(Phylum))
 
 ntaxa(physeq)
 ntaxa(physeq.fin)
-#saveRDS(physeq.fin, "physeq.univ")
+saveRDS(physeq.fin, "physeq.univ")
 
 #saving table
 otu_table <- data.frame(otu_table(physeq.fin)) %>%

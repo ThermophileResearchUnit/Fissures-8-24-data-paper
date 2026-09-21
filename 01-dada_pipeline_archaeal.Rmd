@@ -32,6 +32,7 @@ library("ggplot2")
 library("ggpubr") #for putting figs together
 library("RColorBrewer") #for color palettes
 library("svglite") #for saving SVGs
+library(data.table)
 
 set.seed(57)
 ```
@@ -184,6 +185,8 @@ dim(seqtab.nochim)
 sum(seqtab.nochim)/sum(seqtab)
 # [1] 0.90 - the frequency of non-chimeric sequences
 
+seqtab.nochim <- collapseNoMismatch(seqtab.nochim)
+
 saveRDS(seqtab.nochim, "seqtab.nochim.arch")
 ```
 
@@ -214,9 +217,9 @@ saveRDS(taxa.silva, "taxa.silva.arch")
 # Handoff to phyloseq ----
 # Load all data
 
-#seqtab.nochim <- readRDS("seqtab.nochim.arch")
+seqtab.nochim <- readRDS("seqtab.nochim.arch")
 envdata <-  read.csv("sample_data.csv", row.names = 1, header = TRUE)
-#taxa.silva <- as.matrix(readRDS("taxa.silva.arch"))
+taxa.silva <- as.matrix(readRDS("taxa.silva.arch"))
 
 
 # Change the row names of the ASV table to match the environmental table 
